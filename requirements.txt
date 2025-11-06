@@ -1,0 +1,20 @@
+# requirements.txt
+# RDBMS-to-Graph Migration Engine Dependencies
+
+# The official Neo4j driver for Python
+# Used in Phase 3 (Loader) and Phase 4 (Validator)
+neo4j==5.20.0
+
+# The official MySQL driver from Oracle
+# Used in Phase 1 (Extractor) and Phase 3 (Loader)
+mysql-connector-python==8.4.0
+
+# Python Data Analysis Library
+# Used in Phase 3 for extracting data from MySQL in
+# efficient batches and for in-flight transformations.
+pandas==2.2.2
+
+# SQL Toolkit and Object Relational Mapper
+# Provides a database-agnostic way to query the
+# information_schema, making Phase 1 more robust.
+SQLAlchemy==2.0.30
