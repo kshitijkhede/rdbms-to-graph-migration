@@ -5,6 +5,14 @@ Extracts schema information from MySQL database by interrogating information_sch
 import json
 import mysql.connector
 from config.config import MYSQL_CONFIG, MAPPING_FILE_PATH
+from src.enrichment_rules import (
+    ENRICHMENT_NONE,
+    ENRICHMENT_MERGE_ON_LABEL,
+    ENRICHMENT_REL_FROM_JUNCTION,
+    REL_TYPE_FOREIGN_KEY,
+    REL_TYPE_MANY_TO_MANY,
+    REL_TYPE_INHERITANCE
+)
 
 
 class MetadataExtractor:
@@ -269,7 +277,7 @@ class MetadataExtractor:
     def _generate_default_mapping(self, table_name, columns, primary_keys, 
                                    foreign_keys, is_junction, inheritance_info):
         """
-        Generate default mapping configuration
+        Generate default mapping configuration WITH ENRICHMENT RULES
         
         Args:
             table_name: Name of the table
@@ -280,22 +288,30 @@ class MetadataExtractor:
             inheritance_info: Dictionary with inheritance information
             
         Returns:
-            dict: Default mapping configuration
+            dict: Default mapping configuration with enrichment rules
         """
         mapping = {
             'type': 'entity',  # Can be 'entity', 'junction', or 'inheritance'
             'node_label': table_name,
+            'enrichment_rule': ENRICHMENT_NONE,  # Default: no enrichment
             'properties': [],
             'relationships': []
         }
         
-        # Determine mapping type
+        # Determine mapping type and enrichment rule
         if is_junction:
             mapping['type'] = 'junction'
             mapping['dissolve_to_relationship'] = True
+            mapping['enrichment_rule'] = ENRICHMENT_REL_FROM_JUNCTION
+            
         elif inheritance_info:
             mapping['type'] = 'inheritance'
             mapping['extends'] = inheritance_info['parent_table']
+            mapping['enrichment_rule'] = ENRICHMENT_MERGE_ON_LABEL
+            # Add enrichment-specific fields for CTI
+            mapping['merge_on_label'] = inheritance_info['parent_table']
+            mapping['merge_key_property'] = inheritance_info['parent_column']
+            mapping['target_label'] = table_name
         
         # Map columns to properties (exclude technical PKs)
         fk_columns = {fk['column'] for fk in foreign_keys}
@@ -322,7 +338,7 @@ class MetadataExtractor:
                     continue
                 
                 mapping['relationships'].append({
-                    'type': 'foreign_key',
+                    'type': REL_TYPE_FOREIGN_KEY,
                     'source_column': fk['column'],
                     'target_node': fk['references_table'],
                     'target_column': fk['references_column'],
@@ -331,13 +347,27 @@ class MetadataExtractor:
         else:
             # For junction tables, create relationship between the two entities
             if len(foreign_keys) >= 2:
+                # Extract additional properties from junction table (e.g., quantity, price)
+                junction_props = []
+                fk_columns = {fk['column'] for fk in foreign_keys}
+                for col in columns:
+                    if col['name'] not in fk_columns and col['extra'] != 'auto_increment':
+                        junction_props.append({
+                            'source_column': col['name'],
+                            'target_property': col['name'],
+                            'type': col['type']
+                        })
+                
                 mapping['relationships'] = [{
-                    'type': 'many_to_many',
+                    'type': REL_TYPE_MANY_TO_MANY,
                     'from_table': foreign_keys[0]['references_table'],
                     'from_column': foreign_keys[0]['column'],
+                    'from_key': foreign_keys[0]['references_column'],
                     'to_table': foreign_keys[1]['references_table'],
                     'to_column': foreign_keys[1]['column'],
-                    'relationship_type': f"{foreign_keys[0]['references_table'].upper()}_TO_{foreign_keys[1]['references_table'].upper()}"
+                    'to_key': foreign_keys[1]['references_column'],
+                    'relationship_type': f"CONTAINS",
+                    'properties': junction_props
                 }]
         
         return mapping

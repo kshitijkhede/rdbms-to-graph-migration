@@ -40,6 +40,7 @@ env/
 *.csv
 *.json.bak
 mapping.json
+data/*.json
 output/
 
 # Database

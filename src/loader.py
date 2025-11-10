@@ -1,6 +1,7 @@
 """
 Phase 3: ETL Pipeline / Loader
 Reads mapping.json, extracts data from MySQL, transforms it, and loads into Neo4j
+WITH ENRICHMENT RULE SUPPORT for SCT migration
 """
 import json
 import mysql.connector
@@ -8,6 +9,13 @@ import pandas as pd
 from neo4j import GraphDatabase
 from config.config import MYSQL_CONFIG, NEO4J_CONFIG, MIGRATION_SETTINGS, MAPPING_FILE_PATH
 from src.neo4j_connection import Neo4jConnection
+from src.enrichment_rules import (
+    ENRICHMENT_NONE,
+    ENRICHMENT_MERGE_ON_LABEL,
+    ENRICHMENT_REL_FROM_JUNCTION,
+    REL_TYPE_FOREIGN_KEY,
+    REL_TYPE_MANY_TO_MANY
+)
 
 
 class DataLoader:
@@ -133,9 +141,57 @@ class DataLoader:
         print(f"    Extracted {len(df)} rows")
         return df
     
+    def get_node_cypher_query(self, node_mapping, primary_keys):
+        """
+        Generate appropriate Cypher query based on enrichment rule.
+        This is the "brain" of the SCT engine - dynamically generates
+        different Cypher based on semantic patterns.
+        
+        Args:
+            node_mapping: Mapping configuration for the node
+            primary_keys: List of primary key columns
+            
+        Returns:
+            tuple: (cypher_query, is_enriched)
+        """
+        rule = node_mapping.get('enrichment_rule', ENRICHMENT_NONE)
+        
+        if rule == ENRICHMENT_MERGE_ON_LABEL:
+            # ENRICHED CTI RULE: Add label to existing node
+            # Instead of creating separate Person and Student nodes,
+            # find the existing :Person node and add :Student label
+            merge_label = node_mapping['merge_on_label']
+            merge_key_prop = node_mapping['merge_key_property']
+            target_label = node_mapping['target_label']
+            
+            print(f"    → Using ENRICHMENT: {ENRICHMENT_MERGE_ON_LABEL}")
+            print(f"    → Will add label '{target_label}' to existing '{merge_label}' nodes")
+            
+            # This query finds the existing :Person node and adds :Student label + properties
+            cypher = f"""
+            MATCH (n:{merge_label} {{{merge_key_prop}: $pk_val}})
+            SET n:{target_label}, n += $props
+            RETURN n
+            """
+            return cypher, True
+        
+        else:
+            # STANDARD RULE: Create or update node normally
+            node_label = node_mapping['node_label']
+            pk_col = primary_keys[0] if primary_keys else 'id'
+            
+            # This MERGE query is idempotent and safe to re-run
+            cypher = f"""
+            MERGE (n:{node_label} {{{pk_col}: $pk_val}})
+            ON CREATE SET n += $props
+            ON MATCH SET n += $props
+            RETURN n
+            """
+            return cypher, False
+    
     def migrate_entity_table(self, table_name, table_info):
         """
-        Migrate an entity table to Neo4j nodes
+        Migrate an entity table to Neo4j nodes WITH ENRICHMENT SUPPORT
         
         Args:
             table_name: Name of the table
@@ -144,7 +200,12 @@ class DataLoader:
         print(f"\nMigrating entity table: {table_name}")
         
         mapping = table_info['mapping']
-        node_label = mapping['node_label']
+        primary_keys = table_info['primary_keys']
+        
+        # Check if this is an enriched inheritance mapping
+        is_inheritance = mapping.get('enrichment_rule') == ENRICHMENT_MERGE_ON_LABEL
+        if is_inheritance:
+            print(f"  → ENRICHMENT: Adding label '{mapping['target_label']}' to existing '{mapping['merge_on_label']}' nodes")
         
         # Extract data
         df = self.extract_table_data(table_name)
@@ -159,13 +220,15 @@ class DataLoader:
             for prop in mapping['properties']
         }
         
-        # Get primary key for MERGE
-        primary_keys = table_info['primary_keys']
+        # Get primary key
         if not primary_keys:
             print(f"  Warning: No primary key found for {table_name}")
             return
         
-        merge_key = primary_keys[0]  # Use first PK for merging
+        pk_col = primary_keys[0]  # Use first PK
+        
+        # Generate dynamic Cypher based on enrichment rule
+        cypher, is_enriched = self.get_node_cypher_query(mapping, primary_keys)
         
         # Create nodes in batches
         with self.neo4j_driver.session() as session:
@@ -185,22 +248,18 @@ class DataLoader:
                                 value = value.item()
                             properties[target_prop] = value
                     
-                    # Add primary key for merge
-                    if merge_key in row:
-                        merge_value = row[merge_key]
-                        if hasattr(merge_value, 'item'):
-                            merge_value = merge_value.item()
+                    # Get primary key value
+                    if pk_col in row:
+                        pk_val = row[pk_col]
+                        if hasattr(pk_val, 'item'):
+                            pk_val = pk_val.item()
                         
-                        # Create/merge node
-                        query = f"""
-                        MERGE (n:{node_label} {{{merge_key}: $merge_value}})
-                        SET n += $properties
-                        """
-                        
-                        session.run(query, {
-                            'merge_value': merge_value,
-                            'properties': properties
-                        })
+                        try:
+                            # Use dynamic Cypher query
+                            session.run(cypher, pk_val=pk_val, props=properties)
+                            records_migrated += 1
+                        except Exception as e:
+                            print(f"    Error loading node {pk_val}: {e}")
                         
                         records_migrated += 1
                 
@@ -275,7 +334,8 @@ class DataLoader:
     
     def migrate_junction_table(self, table_name, table_info):
         """
-        Migrate junction table as relationships between entities
+        Migrate junction table as relationships between entities WITH PROPERTIES
+        This implements the ENRICHMENT_REL_FROM_JUNCTION rule
         
         Args:
             table_name: Name of the junction table
@@ -284,18 +344,28 @@ class DataLoader:
         print(f"\nMigrating junction table: {table_name}")
         
         mapping = table_info['mapping']
+        enrichment_rule = mapping.get('enrichment_rule')
+        
+        if enrichment_rule == ENRICHMENT_REL_FROM_JUNCTION:
+            print(f"  → ENRICHMENT: Dissolving junction table into relationships with properties")
+        
         relationships = mapping.get('relationships', [])
         
-        if not relationships or relationships[0]['type'] != 'many_to_many':
+        if not relationships or relationships[0]['type'] != REL_TYPE_MANY_TO_MANY:
             print(f"  Skipping: Not configured as many-to-many")
             return
         
         rel_config = relationships[0]
         from_table = rel_config['from_table']
         from_col = rel_config['from_column']
+        from_key = rel_config.get('from_key', from_col)
         to_table = rel_config['to_table']
         to_col = rel_config['to_column']
+        to_key = rel_config.get('to_key', to_col)
         rel_type = rel_config['relationship_type']
+        
+        # Get relationship property mappings
+        rel_properties = rel_config.get('properties', [])
         
         # Extract data
         df = self.extract_table_data(table_name)
@@ -303,10 +373,6 @@ class DataLoader:
         if df.empty:
             print(f"  No relationships to create")
             return
-        
-        # Get any additional properties (non-FK columns)
-        fk_columns = {from_col, to_col}
-        property_columns = [col for col in df.columns if col not in fk_columns]
         
         with self.neo4j_driver.session() as session:
             relationships_created = 0
@@ -321,38 +387,27 @@ class DataLoader:
                     if hasattr(to_val, 'item'):
                         to_val = to_val.item()
                     
-                    # Build relationship properties
+                    # Build relationship properties from junction table columns
                     rel_props = {}
-                    for prop_col in property_columns:
-                        if pd.notna(row[prop_col]):
-                            val = row[prop_col]
+                    for prop_mapping in rel_properties:
+                        source_col = prop_mapping['source_column']
+                        target_prop = prop_mapping['target_property']
+                        if source_col in row and pd.notna(row[source_col]):
+                            val = row[source_col]
                             if hasattr(val, 'item'):
                                 val = val.item()
-                            rel_props[prop_col] = val
+                            rel_props[target_prop] = val
                     
-                    # Create relationship
+                    # Create relationship with properties
                     query = f"""
-                    MATCH (from:{from_table} {{{from_table.lower()}_id: $from_val}})
-                    MATCH (to:{to_table} {{{to_table.lower()}_id: $to_val}})
-                    MERGE (from)-[r:{rel_type}]->(to)
-                    SET r += $properties
-                    """
-                    
-                    # Try with actual PK column names from the referenced tables
-                    # This is a simplified version - in production, we'd get actual PK names
-                    alt_query = f"""
-                    MATCH (from:{from_table})
-                    WHERE from.{from_col.replace('_id', '')} = $from_val 
-                       OR from.{from_col} = $from_val
-                    MATCH (to:{to_table})
-                    WHERE to.{to_col.replace('_id', '')} = $to_val
-                       OR to.{to_col} = $to_val
+                    MATCH (from:{from_table} {{{from_key}: $from_val}})
+                    MATCH (to:{to_table} {{{to_key}: $to_val}})
                     MERGE (from)-[r:{rel_type}]->(to)
                     SET r += $properties
                     """
                     
                     try:
-                        session.run(alt_query, {
+                        session.run(query, {
                             'from_val': from_val,
                             'to_val': to_val,
                             'properties': rel_props

@@ -310,6 +310,144 @@ class MigrationValidator:
             'passed': passed
         })
     
+    def validate_ecommerce_business_query(self):
+        """
+        Semantic Validation: E-Commerce total revenue calculation
+        Critical test from research paper comparing SQL JOIN vs graph traversal
+        """
+        print("\n--- Business Query Validation: E-Commerce Revenue ---")
+        
+        customer_name = 'Customer A'
+        
+        try:
+            # SQL Query (4-table JOIN)
+            sql_query = """
+            SELECT 
+                c.customer_name,
+                p.product_name,
+                oi.quantity,
+                oi.price_at_purchase,
+                (oi.quantity * oi.price_at_purchase) AS line_total
+            FROM Customers c
+            JOIN Orders o ON c.customer_id = o.customer_id
+            JOIN Order_Items oi ON o.order_id = oi.order_id
+            JOIN Products p ON oi.product_id = p.product_id
+            WHERE c.customer_name = %s
+            ORDER BY p.product_name
+            """
+            
+            self.mysql_cursor.execute(sql_query, (customer_name,))
+            sql_results = self.mysql_cursor.fetchall()
+            sql_total = sum(float(row.get('line_total', 0)) for row in sql_results)
+            
+            # Cypher Query (simple traversal)
+            cypher_query = """
+            MATCH (c:Customers {customer_name: $customer_name})-[:HAS_CUSTOMERS]->(o:Orders)
+                  -[r:CONTAINS]->(p:Products)
+            RETURN 
+                c.customer_name AS customer_name,
+                p.product_name AS product_name,
+                r.quantity AS quantity,
+                r.price_at_purchase AS price_at_purchase,
+                (r.quantity * r.price_at_purchase) AS line_total
+            ORDER BY p.product_name
+            """
+            
+            with self.neo4j_driver.session() as session:
+                result = session.run(cypher_query, customer_name=customer_name)
+                cypher_results = [dict(record) for record in result]
+            
+            cypher_total = sum(float(row.get('line_total', 0)) for row in cypher_results)
+            
+            print(f"\nCustomer: {customer_name}")
+            print(f"  SQL Total:    ${sql_total:.2f} ({len(sql_results)} items)")
+            print(f"  Cypher Total: ${cypher_total:.2f} ({len(cypher_results)} items)")
+            
+            passed = (len(sql_results) == len(cypher_results) and abs(sql_total - cypher_total) < 0.01)
+            status = "✓ PASS" if passed else "✗ FAIL"
+            print(f"  Status: {status}")
+            
+            if passed:
+                print(f"  ✓ Complex SQL JOIN = Simple graph traversal (SCT success!)")
+            
+            self.validation_results.append({
+                'test': 'business_query_ecommerce',
+                'sql_total': float(sql_total),
+                'cypher_total': float(cypher_total),
+                'passed': passed
+            })
+            
+            return passed
+            
+        except Exception as e:
+            print(f"  Error: {e}")
+            self.validation_results.append({'test': 'business_query_ecommerce', 'passed': False})
+            return False
+    
+    def validate_university_business_query(self):
+        """
+        Semantic Validation: University CTI multi-label implementation
+        """
+        print("\n--- Business Query Validation: University CTI ---")
+        
+        try:
+            # SQL Query (2-table JOIN)
+            sql_query = """
+            SELECT p.name, s.major, s.gpa
+            FROM Person p
+            JOIN Student s ON p.person_id = s.person_id
+            ORDER BY p.name
+            """
+            
+            self.mysql_cursor.execute(sql_query)
+            sql_results = self.mysql_cursor.fetchall()
+            
+            # Cypher Query (should work on multi-label nodes)
+            cypher_query = """
+            MATCH (p:Student)
+            RETURN p.name AS name, p.major AS major, p.gpa AS gpa
+            ORDER BY p.name
+            """
+            
+            with self.neo4j_driver.session() as session:
+                result = session.run(cypher_query)
+                cypher_results = [dict(record) for record in result]
+            
+            print(f"\nStudent Count:")
+            print(f"  SQL (JOIN):  {len(sql_results)} students")
+            print(f"  Cypher:      {len(cypher_results)} students")
+            
+            # Check for multi-label nodes
+            with self.neo4j_driver.session() as session:
+                check_query = "MATCH (n:Person:Student) RETURN COUNT(n) as count"
+                result = session.run(check_query)
+                multi_label_count = result.single()['count']
+                print(f"  Multi-label: {multi_label_count} (:Person:Student) nodes")
+                
+                if multi_label_count > 0:
+                    print(f"  ✓ CTI correctly implemented with multi-label nodes!")
+                else:
+                    print(f"  ⚠ No multi-label nodes (may use separate nodes)")
+            
+            passed = len(sql_results) == len(cypher_results) and multi_label_count > 0
+            status = "✓ PASS" if passed else "✗ FAIL"
+            print(f"  Status: {status}")
+            
+            self.validation_results.append({
+                'test': 'business_query_university',
+                'sql_count': len(sql_results),
+                'cypher_count': len(cypher_results),
+                'multi_label_count': multi_label_count,
+                'passed': passed
+            })
+            
+            return passed
+            
+        except Exception as e:
+            print(f"  Error: {e}")
+            self.validation_results.append({'test': 'business_query_university', 'passed': False})
+            return False
+    
     def generate_report(self):
         """Generate validation report"""
         print("\n" + "=" * 60)
@@ -358,6 +496,13 @@ class MigrationValidator:
             self.validate_row_counts()
             self.validate_relationships()
             self.validate_sample_queries()
+            
+            # Run business-specific validation based on database
+            db_name = self.mysql_config.get('database', '').lower()
+            if 'ecommerce' in db_name:
+                self.validate_ecommerce_business_query()
+            elif 'university' in db_name:
+                self.validate_university_business_query()
             
             # Generate report
             success = self.generate_report()
