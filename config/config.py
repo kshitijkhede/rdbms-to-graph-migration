@@ -7,16 +7,16 @@ Update these settings according to your environment
 MYSQL_CONFIG = {
     'host': 'localhost',
     'port': 3306,
-    'user': 'root',
-    'password': 'password',  # Update with your MySQL password
+    'user': 'migration',
+    'password': 'Migration@123',
     'database': 'migration_source_ecommerce',  # Default database
 }
 
 # Neo4j Target Database Configuration
 NEO4J_CONFIG = {
-    'uri': 'neo4j://localhost:7687',
+    'uri': 'bolt://localhost:7687',
     'user': 'neo4j',
-    'password': 'password',  # Update with your Neo4j password
+    'password': 'Migration@123',  # Update with your Neo4j password
 }
 
 # Migration Settings

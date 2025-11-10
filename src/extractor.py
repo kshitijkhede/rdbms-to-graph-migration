@@ -63,7 +63,7 @@ class MetadataExtractor:
             list: List of table names
         """
         query = """
-            SELECT table_name
+            SELECT TABLE_NAME as table_name
             FROM information_schema.tables
             WHERE table_schema = %s AND table_type = 'BASE TABLE'
             ORDER BY table_name
@@ -85,12 +85,12 @@ class MetadataExtractor:
         """
         query = """
             SELECT 
-                column_name,
-                data_type,
-                is_nullable,
-                column_key,
-                column_default,
-                extra
+                COLUMN_NAME as column_name,
+                DATA_TYPE as data_type,
+                IS_NULLABLE as is_nullable,
+                COLUMN_KEY as column_key,
+                COLUMN_DEFAULT as column_default,
+                EXTRA as extra
             FROM information_schema.columns
             WHERE table_schema = %s AND table_name = %s
             ORDER BY ordinal_position
@@ -119,7 +119,7 @@ class MetadataExtractor:
             list: List of primary key column names
         """
         query = """
-            SELECT column_name
+            SELECT COLUMN_NAME as column_name
             FROM information_schema.key_column_usage
             WHERE table_schema = %s 
                 AND table_name = %s 
@@ -141,14 +141,14 @@ class MetadataExtractor:
         """
         query = """
             SELECT 
-                kcu.column_name,
-                kcu.referenced_table_name,
-                kcu.referenced_column_name,
-                kcu.constraint_name
+                kcu.COLUMN_NAME as column_name,
+                kcu.REFERENCED_TABLE_NAME as referenced_table_name,
+                kcu.REFERENCED_COLUMN_NAME as referenced_column_name,
+                kcu.CONSTRAINT_NAME as constraint_name
             FROM information_schema.key_column_usage kcu
             WHERE kcu.table_schema = %s 
                 AND kcu.table_name = %s
-                AND kcu.referenced_table_name IS NOT NULL
+                AND kcu.REFERENCED_TABLE_NAME IS NOT NULL
             ORDER BY kcu.ordinal_position
         """
         self.cursor.execute(query, (self.config['database'], table_name))

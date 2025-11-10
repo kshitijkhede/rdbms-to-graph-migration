@@ -111,8 +111,28 @@ class DataLoader:
                 node_label = mapping['node_label']
                 primary_keys = table_info['primary_keys']
                 
-                # Create constraint for each primary key
-                for pk in primary_keys:
+                # Handle composite keys vs single keys differently
+                if len(primary_keys) > 1:
+                    # For composite keys, create a NODE KEY constraint (Neo4j Enterprise)
+                    # or skip constraint creation (Neo4j Community doesn't support composite NODE KEY)
+                    constraint_name = f"{node_label}_composite_key"
+                    try:
+                        # Try to create NODE KEY constraint (Enterprise feature)
+                        pk_list = ', '.join([f"n.{pk}" for pk in primary_keys])
+                        query = f"""
+                        CREATE CONSTRAINT {constraint_name} IF NOT EXISTS
+                        FOR (n:{node_label})
+                        REQUIRE ({pk_list}) IS NODE KEY
+                        """
+                        session.run(query)
+                        print(f"  Created composite key constraint: {constraint_name}")
+                    except Exception as e:
+                        # NODE KEY not supported in Community Edition, skip constraint
+                        print(f"  Note: Composite key constraint not supported (Community Edition)")
+                        print(f"        Table {node_label} uses composite key: {primary_keys}")
+                else:
+                    # Single primary key - create unique constraint
+                    pk = primary_keys[0]
                     constraint_name = f"{node_label}_{pk}_unique"
                     try:
                         query = f"""
@@ -178,15 +198,26 @@ class DataLoader:
         else:
             # STANDARD RULE: Create or update node normally
             node_label = node_mapping['node_label']
-            pk_col = primary_keys[0] if primary_keys else 'id'
             
-            # This MERGE query is idempotent and safe to re-run
-            cypher = f"""
-            MERGE (n:{node_label} {{{pk_col}: $pk_val}})
-            ON CREATE SET n += $props
-            ON MATCH SET n += $props
-            RETURN n
-            """
+            # Handle composite primary keys
+            if len(primary_keys) > 1:
+                # Build merge pattern for composite keys: {pk1: $pk1, pk2: $pk2}
+                merge_keys = ', '.join([f"{pk}: ${pk}" for pk in primary_keys])
+                cypher = f"""
+                MERGE (n:{node_label} {{{merge_keys}}})
+                ON CREATE SET n += $props
+                ON MATCH SET n += $props
+                RETURN n
+                """
+            else:
+                # Single primary key
+                pk_col = primary_keys[0] if primary_keys else 'id'
+                cypher = f"""
+                MERGE (n:{node_label} {{{pk_col}: $pk_val}})
+                ON CREATE SET n += $props
+                ON MATCH SET n += $props
+                RETURN n
+                """
             return cypher, False
     
     def migrate_entity_table(self, table_name, table_info):
@@ -225,10 +256,11 @@ class DataLoader:
             print(f"  Warning: No primary key found for {table_name}")
             return
         
-        pk_col = primary_keys[0]  # Use first PK
-        
         # Generate dynamic Cypher based on enrichment rule
         cypher, is_enriched = self.get_node_cypher_query(mapping, primary_keys)
+        
+        # Determine if we have composite keys
+        has_composite_keys = len(primary_keys) > 1
         
         # Create nodes in batches
         with self.neo4j_driver.session() as session:
@@ -248,20 +280,31 @@ class DataLoader:
                                 value = value.item()
                             properties[target_prop] = value
                     
-                    # Get primary key value
-                    if pk_col in row:
-                        pk_val = row[pk_col]
-                        if hasattr(pk_val, 'item'):
-                            pk_val = pk_val.item()
-                        
-                        try:
-                            # Use dynamic Cypher query
-                            session.run(cypher, pk_val=pk_val, props=properties)
-                            records_migrated += 1
-                        except Exception as e:
-                            print(f"    Error loading node {pk_val}: {e}")
+                    try:
+                        # Handle composite vs single primary keys
+                        if has_composite_keys:
+                            # Build parameter dict for composite keys
+                            pk_params = {}
+                            for pk in primary_keys:
+                                if pk in row:
+                                    pk_val = row[pk]
+                                    if hasattr(pk_val, 'item'):
+                                        pk_val = pk_val.item()
+                                    pk_params[pk] = pk_val
+                            # Merge pk_params with properties for the query
+                            session.run(cypher, **pk_params, props=properties)
+                        else:
+                            # Single primary key - use old logic
+                            pk_col = primary_keys[0]
+                            if pk_col in row:
+                                pk_val = row[pk_col]
+                                if hasattr(pk_val, 'item'):
+                                    pk_val = pk_val.item()
+                                session.run(cypher, pk_val=pk_val, props=properties)
                         
                         records_migrated += 1
+                    except Exception as e:
+                        print(f"    Error loading node: {e}")
                 
                 print(f"    Migrated {records_migrated}/{len(df)} records")
         

@@ -196,7 +196,7 @@ class MigrationValidator:
         
         with self.neo4j_driver.session() as session:
             result = session.run("""
-                MATCH (c:Customers)-[:HAS_ORDERS]->(o:Orders)
+                MATCH (o:Orders)-[:HAS_CUSTOMERS]->(c:Customers)
                 RETURN COUNT(DISTINCT c) as count
             """)
             neo4j_result = result.single()
@@ -227,9 +227,9 @@ class MigrationValidator:
         mysql_result = self.mysql_cursor.fetchone()['count']
         
         with self.neo4j_driver.session() as session:
-            # This depends on how Order_Items was migrated
+            # Junction table was dissolved to CONTAINS relationship
             result = session.run("""
-                MATCH (o:Orders)-[:HAS_ORDER_ITEMS]->(p:Products)
+                MATCH (o:Orders)-[:CONTAINS]->(p:Products)
                 RETURN COUNT(DISTINCT p) as count
             """)
             record = result.single()
@@ -289,7 +289,7 @@ class MigrationValidator:
         
         with self.neo4j_driver.session() as session:
             result = session.run("""
-                MATCH (s:Student)-[:HAS_ENROLLED_IN]->()
+                MATCH ()-[:HAS_STUDENT]->(s:Student)
                 RETURN COUNT(DISTINCT s) as count
             """)
             record = result.single()
@@ -342,7 +342,7 @@ class MigrationValidator:
             
             # Cypher Query (simple traversal)
             cypher_query = """
-            MATCH (c:Customers {customer_name: $customer_name})-[:HAS_CUSTOMERS]->(o:Orders)
+            MATCH (c:Customers {customer_name: $customer_name})<-[:HAS_CUSTOMERS]-(o:Orders)
                   -[r:CONTAINS]->(p:Products)
             RETURN 
                 c.customer_name AS customer_name,
