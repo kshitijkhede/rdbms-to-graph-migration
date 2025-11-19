@@ -1,0 +1,54 @@
+# Migration Configuration Example
+
+# Source Database Configuration
+source:
+  type: mysql  # Options: mysql, postgresql, sqlserver
+  host: localhost
+  port: 3306
+  database: my_database
+  username: db_user
+  password: db_password
+  schema: public  # Optional, for PostgreSQL
+
+# Target Neo4j Configuration
+target:
+  neo4j:
+    uri: bolt://localhost:7687
+    username: neo4j
+    password: password
+    database: neo4j  # Neo4j 4.0+ supports multiple databases
+
+# Migration Settings
+migration:
+  batch_size: 1000  # Number of rows to process per batch
+  max_workers: 4  # Number of parallel workers
+  validate_before: true  # Run validation before migration
+  validate_after: true  # Run validation after migration
+  create_indexes: true  # Create indexes in Neo4j
+  streaming: false  # Use streaming mode for large datasets
+
+# Schema Mapping Configuration
+mapping:
+  # Tables to treat as nodes (default: all non-junction tables)
+  tables_as_nodes:
+    - users
+    - products
+    - orders
+    - customers
+  
+  # Convert foreign keys to relationships
+  foreign_keys_as_relationships: true
+  
+  # Convert junction tables to relationships
+  junction_tables_as_relationships: true
+  
+  # Custom relationship names (optional)
+  custom_relationships:
+    order_items: CONTAINS
+    user_roles: HAS_ROLE
+
+# Logging Configuration
+logging:
+  level: INFO  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: logs/migration.log
+  console: true
