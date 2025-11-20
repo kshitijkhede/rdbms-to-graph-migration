@@ -178,10 +178,8 @@ class GraphTransformer:
         
         rel_type = RelationshipType(
             name=rel_name,
-            from_node=sanitize_label(relationship.source_entity),
-            to_node=sanitize_label(relationship.target_entity),
-            cardinality=relationship.cardinality.value,
-            semantics=relationship.semantics.value
+            from_label=sanitize_label(relationship.source_entity),
+            to_label=sanitize_label(relationship.target_entity)
         )
         
         # Add relationship properties if any
