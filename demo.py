@@ -162,14 +162,14 @@ def demonstrate_graph_transformation(conceptual_model):
     
     print(f"\n✓ Transformation complete!")
     print(f"\nGraph Model Statistics:")
-    print(f"  • Node Types: {len(graph_model.node_types)}")
-    print(f"  • Edge Types: {len(graph_model.edge_types)}")
+    print(f"  • Node Types: {len(graph_model.node_labels)}")
+    print(f"  • Edge Types: {len(graph_model.relationship_types)}")
     print(f"  • Indexes: {len(graph_model.indexes)}")
     print(f"  • Constraints: {len(graph_model.constraints)}")
     
     print(f"\n🔵 Node Types:")
-    for node_type in graph_model.node_types:
-        props_preview = ', '.join(list(node_type.properties.keys())[:4])
+    for node_type in graph_model.node_labels:
+        props_preview = ', '.join([p.name for p in node_type.properties[:4]])
         if len(node_type.properties) > 4:
             props_preview += ", ..."
         print(f"  • {node_type.label}")
@@ -178,9 +178,9 @@ def demonstrate_graph_transformation(conceptual_model):
             print(f"    Indexes: {', '.join(node_type.indexes)}")
     
     print(f"\n➡️  Edge Types:")
-    for edge_type in graph_model.edge_types:
+    for edge_type in graph_model.relationship_types:
         props_str = f" ({len(edge_type.properties)} properties)" if edge_type.properties else ""
-        print(f"  • {edge_type.from_node} -[{edge_type.relationship_type}]-> {edge_type.to_node}{props_str}")
+        print(f"  • {edge_type.from_label} -[{edge_type.name}]-> {edge_type.to_label}{props_str}")
     
     return graph_model
 
@@ -191,17 +191,17 @@ def display_cypher_queries(graph_model):
     print_header("Sample Cypher Queries for Neo4j")
     
     print("📝 Node creation query:")
-    if graph_model.node_types:
-        node_type = graph_model.node_types[0]
-        props = ', '.join([f"{k}: ${k}" for k in list(node_type.properties.keys())[:3]])
+    if graph_model.node_labels:
+        node_type = graph_model.node_labels[0]
+        props = ', '.join([f"{p.name}: ${p.name}" for p in node_type.properties[:3]])
         print(f"  CREATE (n:{node_type.label} {{{props}}})")
     
     print("\n📝 Relationship creation query:")
-    if graph_model.edge_types:
-        edge_type = graph_model.edge_types[0]
-        print(f"  MATCH (a:{edge_type.from_node}), (b:{edge_type.to_node})")
+    if graph_model.relationship_types:
+        edge_type = graph_model.relationship_types[0]
+        print(f"  MATCH (a:{edge_type.from_label}), (b:{edge_type.to_label})")
         print(f"  WHERE a.id = $from_id AND b.id = $to_id")
-        print(f"  CREATE (a)-[:{edge_type.relationship_type}]->(b)")
+        print(f"  CREATE (a)-[:{edge_type.name}]->(b)")
     
     print("\n📝 Sample queries:")
     print("  // Find all students in a department")
