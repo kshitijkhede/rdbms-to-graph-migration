@@ -164,21 +164,17 @@ def demonstrate_graph_transformation(conceptual_model):
     print(f"\nGraph Model Statistics:")
     print(f"  • Node Types: {len(graph_model.node_labels)}")
     print(f"  • Edge Types: {len(graph_model.relationship_types)}")
-    print(f"  • Indexes: {len(graph_model.indexes)}")
-    print(f"  • Constraints: {len(graph_model.constraints)}")
     
     print(f"\n🔵 Node Types:")
-    for node_type in graph_model.node_labels:
+    for node_name, node_type in graph_model.node_labels.items():
         props_preview = ', '.join([p.name for p in node_type.properties[:4]])
         if len(node_type.properties) > 4:
             props_preview += ", ..."
         print(f"  • {node_type.label}")
         print(f"    Properties: {props_preview}")
-        if node_type.indexes:
-            print(f"    Indexes: {', '.join(node_type.indexes)}")
     
     print(f"\n➡️  Edge Types:")
-    for edge_type in graph_model.relationship_types:
+    for rel_key, edge_type in graph_model.relationship_types.items():
         props_str = f" ({len(edge_type.properties)} properties)" if edge_type.properties else ""
         print(f"  • {edge_type.from_label} -[{edge_type.name}]-> {edge_type.to_label}{props_str}")
     
@@ -192,13 +188,13 @@ def display_cypher_queries(graph_model):
     
     print("📝 Node creation query:")
     if graph_model.node_labels:
-        node_type = graph_model.node_labels[0]
+        node_type = list(graph_model.node_labels.values())[0]
         props = ', '.join([f"{p.name}: ${p.name}" for p in node_type.properties[:3]])
         print(f"  CREATE (n:{node_type.label} {{{props}}})")
     
     print("\n📝 Relationship creation query:")
     if graph_model.relationship_types:
-        edge_type = graph_model.relationship_types[0]
+        edge_type = list(graph_model.relationship_types.values())[0]
         print(f"  MATCH (a:{edge_type.from_label}), (b:{edge_type.to_label})")
         print(f"  WHERE a.id = $from_id AND b.id = $to_id")
         print(f"  CREATE (a)-[:{edge_type.name}]->(b)")
