@@ -30,69 +30,74 @@ def create_sample_schema():
     db_schema = DatabaseSchema(database_name="university_db", database_type="mysql")
     
     # Students table
-    students = Table(name="students", row_count=500)
-    students.add_column(Column("student_id", "INTEGER", is_primary=True))
-    students.add_column(Column("first_name", "VARCHAR", max_length=50))
-    students.add_column(Column("last_name", "VARCHAR", max_length=50))
-    students.add_column(Column("email", "VARCHAR", max_length=100))
-    students.add_column(Column("enrollment_date", "DATE"))
+    students = Table(name="students", row_count=500, columns=[
+        Column("student_id", "INTEGER"),
+        Column("first_name", "VARCHAR", max_length=50),
+        Column("last_name", "VARCHAR", max_length=50),
+        Column("email", "VARCHAR", max_length=100),
+        Column("enrollment_date", "DATE")
+    ])
     db_schema.add_table(students)
     
     # Courses table
-    courses = Table(name="courses", row_count=100)
-    courses.add_column(Column("course_id", "INTEGER", is_primary=True))
-    courses.add_column(Column("course_name", "VARCHAR", max_length=100))
-    courses.add_column(Column("credits", "INTEGER"))
-    courses.add_column(Column("department_id", "INTEGER", is_foreign=True))
+    courses = Table(name="courses", row_count=100, columns=[
+        Column("course_id", "INTEGER"),
+        Column("course_name", "VARCHAR", max_length=100),
+        Column("credits", "INTEGER"),
+        Column("department_id", "INTEGER")
+    ])
     db_schema.add_table(courses)
     
     # Departments table
-    departments = Table(name="departments", row_count=20)
-    departments.add_column(Column("department_id", "INTEGER", is_primary=True))
-    departments.add_column(Column("department_name", "VARCHAR", max_length=100))
-    departments.add_column(Column("building", "VARCHAR", max_length=50))
+    departments = Table(name="departments", row_count=20, columns=[
+        Column("department_id", "INTEGER"),
+        Column("department_name", "VARCHAR", max_length=100),
+        Column("building", "VARCHAR", max_length=50)
+    ])
     db_schema.add_table(departments)
     
     # Enrollments junction table
-    enrollments = Table(name="enrollments", row_count=2000)
-    enrollments.add_column(Column("student_id", "INTEGER", is_primary=True, is_foreign=True))
-    enrollments.add_column(Column("course_id", "INTEGER", is_primary=True, is_foreign=True))
-    enrollments.add_column(Column("enrollment_date", "DATE"))
-    enrollments.add_column(Column("grade", "VARCHAR", max_length=2))
+    enrollments = Table(name="enrollments", row_count=2000, columns=[
+        Column("student_id", "INTEGER"),
+        Column("course_id", "INTEGER"),
+        Column("enrollment_date", "DATE"),
+        Column("grade", "VARCHAR", max_length=2)
+    ])
     db_schema.add_table(enrollments)
     
     # Professors table
-    professors = Table(name="professors", row_count=50)
-    professors.add_column(Column("professor_id", "INTEGER", is_primary=True))
-    professors.add_column(Column("first_name", "VARCHAR", max_length=50))
-    professors.add_column(Column("last_name", "VARCHAR", max_length=50))
-    professors.add_column(Column("department_id", "INTEGER", is_foreign=True))
-    professors.add_column(Column("hire_date", "DATE"))
+    professors = Table(name="professors", row_count=50, columns=[
+        Column("professor_id", "INTEGER"),
+        Column("first_name", "VARCHAR", max_length=50),
+        Column("last_name", "VARCHAR", max_length=50),
+        Column("department_id", "INTEGER"),
+        Column("hire_date", "DATE")
+    ])
     db_schema.add_table(professors)
     
     # Add foreign keys
-    courses.add_foreign_key(ForeignKey(
+    courses.foreign_keys.append(ForeignKey(
         name="fk_courses_department",
         column="department_id",
         referenced_table="departments",
         referenced_column="department_id"
     ))
     
-    enrollments.add_foreign_key(ForeignKey(
+    enrollments.foreign_keys.append(ForeignKey(
         name="fk_enrollments_student",
         column="student_id",
         referenced_table="students",
         referenced_column="student_id"
     ))
     
-    enrollments.add_foreign_key(ForeignKey(
+    enrollments.foreign_keys.append(ForeignKey(
         name="fk_enrollments_course",
         column="course_id",
         referenced_table="courses",
         referenced_column="course_id"
     ))
     
-    professors.add_foreign_key(ForeignKey(
+    professors.foreign_keys.append(ForeignKey(
         name="fk_professors_department",
         column="department_id",
         referenced_table="departments",
