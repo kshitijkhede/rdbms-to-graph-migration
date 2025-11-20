@@ -150,14 +150,14 @@ def demonstrate_semantic_enrichment(db_schema):
     return conceptual_model
 
 
-def demonstrate_graph_transformation(conceptual_model):
+def demonstrate_graph_transformation(conceptual_model, db_schema):
     """Demonstrate graph transformation"""
     
     print_header("PHASE 2: Graph Transformation (C→T)")
     
     print("🔄 Transforming conceptual model to property graph...")
     
-    transformer = GraphTransformer(conceptual_model=conceptual_model)
+    transformer = GraphTransformer(db_schema=db_schema, conceptual_model=conceptual_model)
     graph_model = transformer.transform()
     
     print(f"\n✓ Transformation complete!")
@@ -237,7 +237,7 @@ The system automatically:
         conceptual_model = demonstrate_semantic_enrichment(db_schema)
         
         # Demonstrate graph transformation
-        graph_model = demonstrate_graph_transformation(conceptual_model)
+        graph_model = demonstrate_graph_transformation(conceptual_model, db_schema)
         
         # Display Cypher queries
         display_cypher_queries(graph_model)
