@@ -137,7 +137,8 @@ def demonstrate_semantic_enrichment(db_schema):
         entity_type_str = entity.entity_type.value if entity.entity_type else "Strong"
         print(f"  • {entity_name} ({entity_type_str})")
         if entity.attributes:
-            print(f"    Attributes: {', '.join(list(entity.attributes.keys())[:5])}")
+            attrs = entity.attributes if isinstance(entity.attributes, list) else list(entity.attributes.keys())
+            print(f"    Attributes: {', '.join(attrs[:5])}")
     
     print(f"\n🔗 Relationships:")
     for rel in conceptual_model.relationships:
