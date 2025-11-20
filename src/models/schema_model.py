@@ -78,13 +78,19 @@ class PrimaryKey:
 
 @dataclass
 class ForeignKey:
-    """Represents a foreign key constraint."""
+    """Represents a foreign key constraint with semantic enrichment."""
     name: str
     column: str
     referenced_table: str
     referenced_column: str
     on_delete: Optional[str] = None
     on_update: Optional[str] = None
+    # Semantic enrichment properties
+    cardinality: Optional[str] = None  # '1:1', '1:N', 'N:M'
+    relationship_name: Optional[str] = None  # Business-meaningful name
+    is_inheritance: bool = False  # True if represents subclass relationship
+    is_aggregation: bool = False  # True if represents part-of relationship
+    is_weak_entity: bool = False  # True if target is weak entity
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert foreign key to dictionary."""
@@ -94,7 +100,12 @@ class ForeignKey:
             'referenced_table': self.referenced_table,
             'referenced_column': self.referenced_column,
             'on_delete': self.on_delete,
-            'on_update': self.on_update
+            'on_update': self.on_update,
+            'cardinality': self.cardinality,
+            'relationship_name': self.relationship_name,
+            'is_inheritance': self.is_inheritance,
+            'is_aggregation': self.is_aggregation,
+            'is_weak_entity': self.is_weak_entity
         }
 
 
@@ -132,7 +143,7 @@ class Constraint:
 
 @dataclass
 class Table:
-    """Represents a database table."""
+    """Represents a database table with semantic classification."""
     name: str
     schema: str = "public"
     columns: List[Column] = field(default_factory=list)
@@ -141,6 +152,12 @@ class Table:
     indexes: List[Index] = field(default_factory=list)
     constraints: List[Constraint] = field(default_factory=list)
     row_count: int = 0
+    # Semantic classification
+    is_superclass: bool = False  # Part of inheritance hierarchy (parent)
+    is_subclass: bool = False  # Part of inheritance hierarchy (child)
+    superclass_table: Optional[str] = None  # Name of superclass if subclass
+    is_weak_entity: bool = False  # Depends on another entity for existence
+    owner_table: Optional[str] = None  # Owning entity if weak
     
     def get_column(self, column_name: str) -> Optional[Column]:
         """Get column by name."""

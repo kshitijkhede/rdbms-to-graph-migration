@@ -9,8 +9,13 @@ This system provides an automated, scalable solution for transforming relational
 ### Key Features
 
 - **Multi-Database Support**: MySQL, PostgreSQL, SQL Server
+- **Semantic Enrichment**: S→C→T architecture with DBRE techniques (NEW!)
 - **Automatic Schema Analysis**: Introspects RDBMS schemas to identify tables, relationships, constraints
 - **Intelligent Graph Mapping**: Transforms relational models to property graph models
+- **Inheritance Detection**: Identifies superclass-subclass relationships
+- **Cardinality Inference**: Automatically determines 1:1, 1:N, M:N relationships
+- **Business-Meaningful Names**: Generates semantic relationship names
+- **Weak Entity Recognition**: Detects weak entities and aggregations
 - **Batch Processing**: Efficient data migration with configurable batch sizes
 - **Data Validation**: Pre and post-migration validation checks
 - **Error Handling**: Comprehensive error handling and rollback capabilities
@@ -20,43 +25,66 @@ This system provides an automated, scalable solution for transforming relational
 
 ## 🏗️ Architecture
 
+### S→C→T Transformation Pipeline (Semantic Enrichment)
+
 ```
-┌─────────────────┐
-│  Source RDBMS   │
-│ (MySQL/PG/MSSQL)│
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Schema Analyzer │ ◄─── Introspects database structure
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Data Extractor  │ ◄─── Extracts data with batching
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Graph Transformer│ ◄─── Maps relational → graph model
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Neo4j Loader   │ ◄─── Loads into graph database
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   Validator     │ ◄─── Verifies migration integrity
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│  Target Neo4j   │
-│  Graph Database │
-└─────────────────┘
+┌─────────────────────────┐
+│    Source RDBMS (S)     │
+│   (MySQL/PG/MSSQL)      │
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│   Schema Analyzer       │ ◄─── Phase 1: Extract relational schema
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│  Semantic Enricher      │ ◄─── Phase 2: S→C transformation (DBRE)
+│  - Inheritance detect   │      • Detect inheritance hierarchies
+│  - Cardinality infer    │      • Infer relationship cardinality
+│  - Weak entity detect   │      • Identify weak entities
+│  - Semantic naming      │      • Generate business-meaningful names
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│  Conceptual Model (C)   │ ◄─── Intermediate enriched model
+│  - Entities             │      • Strong/Weak entities
+│  - Relationships        │      • Semantic relationships
+│  - Hierarchies          │      • Inheritance hierarchies
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│  Graph Transformer      │ ◄─── Phase 3: C→T transformation
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│   Data Extractor        │ ◄─── Extract data with batching
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│   Neo4j Loader          │ ◄─── Phase 4: Load into graph database
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│   Data Validator        │ ◄─── Verify migration integrity
+└───────────┬─────────────┘
+            │
+            ▼
+┌─────────────────────────┐
+│  Target Neo4j (T)       │
+│  Property Graph         │
+└─────────────────────────┘
 ```
+
+**Two Migration Modes:**
+1. **S→C→T (Recommended)**: With semantic enrichment - preserves domain semantics
+2. **S→T (Legacy)**: Direct transformation - faster but loses semantic information
 
 ## 📋 Prerequisites
 
@@ -140,10 +168,58 @@ logging:
 
 ## 📖 Usage
 
-### Basic Migration
+### S→C→T Migration (Recommended - With Semantic Enrichment)
 
 ```bash
-# Run complete migration
+# Run complete S→C→T migration with semantic enrichment
+python -m src.cli migrate-sct --config config/migration_config.yml
+
+# Dry run (analyze and enrich only, no data migration)
+python -m src.cli migrate-sct --config config/migration_config.yml --dry-run
+
+# Migrate specific tables with enrichment
+python -m src.cli migrate-sct --config config/migration_config.yml --tables users,orders,products
+
+# Clear target database before migration
+python -m src.cli migrate-sct --config config/migration_config.yml --clear-target
+```
+
+### Semantic Enrichment Only
+
+```bash
+# Perform semantic enrichment (S→C) without migration
+python -m src.cli enrich --config config/migration_config.yml
+
+# Export enriched conceptual model to JSON
+python -m src.cli enrich --config config/migration_config.yml --output conceptual_model.json
+```
+
+**Output Example:**
+```
+🧠 Performing semantic enrichment (S→C)...
+📊 Phase 1: Extracting relational schema...
+   ✓ Found 15 tables
+   
+🔍 Phase 2: Semantic enrichment...
+📈 Semantic Enrichment Results:
+   ✓ Entities: 15
+   ✓ Strong Entities: 12
+   ✓ Weak Entities: 3
+   ✓ Relationships: 28
+   ✓ Inheritance Hierarchies: 2
+   
+🔗 Detected Inheritance Hierarchies:
+   1. Person → Employee → Manager
+   
+🏷️ Sample Enriched Relationships:
+   • Order -CONTAINS[1:N, COMPOSITION]-> Order_Item
+   • Employee -WORKS_IN[N:1, AGGREGATION]-> Department
+```
+
+### Basic Migration (Legacy S→T)
+
+```bash
+# Run direct migration without semantic enrichment (faster, less semantic info)
 python -m src.cli migrate --config config/migration_config.yml
 
 # Dry run (analyze only, no data migration)
@@ -153,7 +229,7 @@ python -m src.cli migrate --config config/migration_config.yml --dry-run
 python -m src.cli migrate --config config/migration_config.yml --tables users,orders,products
 ```
 
-### Schema Analysis Only
+### Schema Analysis
 
 ```bash
 # Analyze source database schema
@@ -173,35 +249,131 @@ python -m src.cli validate --config config/migration_config.yml
 python -m src.cli validate --config config/migration_config.yml --check-counts
 ```
 
+## 🧠 Semantic Enrichment Features
+
+### What is Semantic Enrichment?
+
+Semantic enrichment recovers domain knowledge lost during database design through **Database Reverse Engineering (DBRE)** techniques. The system analyzes schema patterns, naming conventions, and constraints to infer:
+
+#### 1. **Inheritance Hierarchies**
+Detects superclass-subclass relationships (e.g., `Person → Employee`, `Product → DigitalProduct`)
+
+**Before (S→T):**
+```cypher
+CREATE (e:Employee {emp_id: 101, name: "John"})
+CREATE (e)-[:FK_EMPLOYEE_PERSON]->(p:Person {person_id: 101})
+```
+
+**After (S→C→T):**
+```cypher
+CREATE (e:Employee:Person {person_id: 101, name: "John", emp_id: 101})
+// Inheritance represented via multiple labels
+```
+
+#### 2. **Cardinality Inference**
+Automatically determines relationship cardinality: 1:1, 1:N, N:1, M:N
+
+**Detection Rules:**
+- `1:1` - Foreign key with UNIQUE constraint
+- `1:N` - Standard foreign key
+- `M:N` - Junction table with two foreign keys
+
+#### 3. **Weak Entity Recognition**
+Identifies entities dependent on owner entities (e.g., `Order_Item` depends on `Order`)
+
+**Represented as:**
+```cypher
+CREATE (o:Order {order_id: 1})
+CREATE (i:OrderItem {order_id: 1, item_num: 1})
+CREATE (o)-[:CONTAINS {cardinality: "1:N", semantics: "COMPOSITION"}]->(i)
+```
+
+#### 4. **Aggregation vs Composition**
+Distinguishes ownership strength:
+- **Composition**: Dependent lifecycle (e.g., Order → Order_Item)
+- **Aggregation**: Independent lifecycle (e.g., Department ← Employee)
+
+#### 5. **Business-Meaningful Relationship Names**
+Transforms generic FK names to semantic names:
+
+| Before (S→T) | After (S→C→T) |
+|--------------|---------------|
+| `FK_ORDER_CUSTOMER` | `PLACED_BY` |
+| `FK_EMPLOYEE_DEPARTMENT` | `WORKS_IN` |
+| `FK_PRODUCT_CATEGORY` | `BELONGS_TO` |
+
+### Semantic Enrichment Example
+
+**Input Schema (Relational):**
+```sql
+CREATE TABLE Person (person_id INT PRIMARY KEY, name VARCHAR);
+CREATE TABLE Employee (emp_id INT PRIMARY KEY, person_id INT REFERENCES Person, dept_id INT);
+CREATE TABLE Order (order_id INT PRIMARY KEY, customer_id INT REFERENCES Person);
+CREATE TABLE Order_Item (order_id INT, item_num INT, product_id INT, 
+                        PRIMARY KEY(order_id, item_num),
+                        FOREIGN KEY(order_id) REFERENCES Order);
+```
+
+**Enrichment Results:**
+```
+📊 Conceptual Model:
+   • Entities: 4
+   • Strong Entities: 3 (Person, Order, Product)
+   • Weak Entities: 1 (Order_Item)
+   • Inheritance Hierarchies: 1 (Person → Employee)
+   
+🔗 Relationships:
+   • Employee -IS_A[1:1, INHERITANCE]-> Person
+   • Order -PLACED_BY[N:1, ASSOCIATION]-> Person
+   • Order -CONTAINS[1:N, COMPOSITION]-> Order_Item (weak entity)
+   • Order_Item -FOR_PRODUCT[N:1, ASSOCIATION]-> Product
+```
+
+**See [docs/semantic_enrichment.md](docs/semantic_enrichment.md) for detailed algorithms and usage.**
+
 ## 📊 Migration Process
 
-### 1. Pre-Migration Analysis
+### S→C→T Pipeline (Recommended)
 
+#### Phase 1: Schema Extraction (S)
 ```bash
 python -m src.cli analyze --config config/migration_config.yml
 ```
 
-This will:
-- Analyze source database schema
-- Identify tables, columns, relationships
-- Detect primary keys, foreign keys, constraints
-- Generate recommended graph model mapping
-- Estimate migration time and resources
+Analyzes source database:
+- Identifies tables, columns, relationships
+- Detects primary keys, foreign keys, constraints
+- Collects metadata and statistics
 
-### 2. Execute Migration
-
+#### Phase 2: Semantic Enrichment (S→C)
 ```bash
-python -m src.cli migrate --config config/migration_config.yml
+python -m src.cli enrich --config config/migration_config.yml
 ```
 
-The system will:
-1. Connect to source and target databases
-2. Analyze schema structure
-3. Create graph model mapping
-4. Extract data in batches
-5. Transform to graph model
-6. Load into Neo4j
-7. Create indexes and constraints
+Applies DBRE techniques:
+- Detects inheritance hierarchies
+- Infers relationship cardinality
+- Identifies weak entities and aggregations
+- Generates business-meaningful names
+
+#### Phase 3: Graph Transformation (C→T)
+Transforms conceptual model to property graph:
+- Maps entities to node labels
+- Maps relationships to edge types
+- Preserves semantic properties
+
+#### Phase 4: Data Migration
+```bash
+python -m src.cli migrate-sct --config config/migration_config.yml
+```
+
+Executes complete S→C→T pipeline:
+1. Extract schema and data from source
+2. Apply semantic enrichment
+3. Transform to graph model
+4. Load into Neo4j with semantic properties
+5. Create indexes and constraints
+6. Validate migration integrity
 8. Validate data integrity
 
 ### 3. Post-Migration Validation

@@ -1,12 +1,17 @@
 """
 Graph Transformer
 
-Transforms relational database schema and data into graph model.
+Transforms conceptual model (C) to property graph model (T).
+Implements the C→T phase of the S→C→T architecture.
 """
 
 import logging
 from typing import Dict, List, Any, Optional
 from ..models.schema_model import DatabaseSchema, Table, ForeignKey
+from ..models.conceptual_model import (
+    ConceptualModel, ConceptualEntity, ConceptualRelationship,
+    EntityType, RelationshipSemantics
+)
 from ..models.graph_model import (
     GraphModel, NodeLabel, RelationshipType, Property, PropertyType
 )
@@ -17,32 +22,77 @@ from ..utils.helpers import (
 
 
 class GraphTransformer:
-    """Transforms relational schema to graph model."""
+    """Transforms conceptual model to property graph model (C→T)."""
     
-    def __init__(self, db_schema: DatabaseSchema, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, db_schema: DatabaseSchema = None, 
+                 conceptual_model: ConceptualModel = None,
+                 config: Optional[Dict[str, Any]] = None):
         """
         Initialize graph transformer.
         
         Args:
-            db_schema: Database schema to transform
+            db_schema: Optional database schema (for backward compatibility)
+            conceptual_model: Enriched conceptual model (preferred)
             config: Optional mapping configuration
         """
         self.db_schema = db_schema
+        self.conceptual_model = conceptual_model
         self.config = config or {}
         self.logger = logging.getLogger(self.__class__.__name__)
+        
+        schema_name = (conceptual_model.source_schema_name if conceptual_model 
+                      else db_schema.database_name if db_schema else "unknown")
+        
         self.graph_model = GraphModel(
-            name=db_schema.database_name + "_graph",
-            source_schema_name=db_schema.database_name
+            name=schema_name + "_graph",
+            source_schema_name=schema_name
         )
     
     def transform(self) -> GraphModel:
         """
-        Transform complete database schema to graph model.
+        Transform to graph model.
+        Uses conceptual model if available (C→T), otherwise direct transformation.
         
         Returns:
             GraphModel object
         """
-        self.logger.info("Starting schema transformation to graph model")
+        if self.conceptual_model:
+            return self._transform_from_conceptual()
+        elif self.db_schema:
+            return self._transform_from_schema()
+        else:
+            raise ValueError("Either conceptual_model or db_schema must be provided")
+    
+    def _transform_from_conceptual(self) -> GraphModel:
+        """
+        Transform from enriched conceptual model (C→T).
+        Preferred method that preserves semantic information.
+        """
+        self.logger.info("Starting C→T transformation (Conceptual to Graph)")
+        
+        # Transform conceptual entities to node labels
+        for entity in self.conceptual_model.entities.values():
+            node_label = self._conceptual_entity_to_node(entity)
+            self.graph_model.add_node_label(node_label)
+        
+        self.logger.info(f"Created {len(self.graph_model.node_labels)} node labels from conceptual entities")
+        
+        # Transform conceptual relationships to graph relationships
+        for relationship in self.conceptual_model.relationships:
+            rel_type = self._conceptual_relationship_to_edge(relationship)
+            if rel_type:
+                self.graph_model.add_relationship_type(rel_type)
+        
+        self.logger.info(f"Created {len(self.graph_model.relationship_types)} relationship types")
+        
+        return self.graph_model
+    
+    def _transform_from_schema(self) -> GraphModel:
+        """
+        Direct transformation from schema (S→T).
+        Fallback method for backward compatibility.
+        """
+        self.logger.info("Starting S→T transformation (Schema to Graph)")
         
         # Transform entity tables to nodes
         entity_tables = self.db_schema.get_entity_tables()
@@ -71,6 +121,90 @@ class GraphTransformer:
         )
         
         return self.graph_model
+    
+    def _conceptual_entity_to_node(self, entity: ConceptualEntity) -> NodeLabel:
+        """
+        Transform conceptual entity to node label.
+        
+        Args:
+            entity: Conceptual entity
+            
+        Returns:
+            NodeLabel object
+        """
+        label_name = sanitize_label(entity.name)
+        node_label = NodeLabel(
+            name=label_name,
+            source_table=entity.source_table
+        )
+        
+        # Add properties from attributes
+        # Get table for type information
+        if self.db_schema:
+            table = self.db_schema.get_table(entity.source_table)
+            if table:
+                for attr_name in entity.attributes:
+                    column = table.get_column(attr_name)
+                    if column:
+                        prop_name = sanitize_property_name(attr_name)
+                        prop_type = self._get_property_type(column.data_type)
+                        
+                        prop = Property(
+                            name=prop_name,
+                            property_type=prop_type,
+                            is_required=not column.is_nullable,
+                            source_column=attr_name
+                        )
+                        node_label.properties.append(prop)
+                
+                # Set primary key
+                if entity.key_attributes:
+                    node_label.primary_key = sanitize_property_name(entity.key_attributes[0])
+        
+        return node_label
+    
+    def _conceptual_relationship_to_edge(self, relationship: ConceptualRelationship) -> Optional[RelationshipType]:
+        """
+        Transform conceptual relationship to graph relationship type.
+        
+        Args:
+            relationship: Conceptual relationship
+            
+        Returns:
+            RelationshipType object
+        """
+        # Use the enriched relationship name
+        rel_name = relationship.name
+        
+        rel_type = RelationshipType(
+            name=rel_name,
+            from_node=sanitize_label(relationship.source_entity),
+            to_node=sanitize_label(relationship.target_entity),
+            cardinality=relationship.cardinality.value,
+            semantics=relationship.semantics.value
+        )
+        
+        # Add relationship properties if any
+        if relationship.attributes and self.db_schema:
+            # Get source table for junction tables
+            if relationship.source_junction_table:
+                junction_table = self.db_schema.get_table(relationship.source_junction_table)
+                if junction_table:
+                    for attr_name in relationship.attributes:
+                        column = junction_table.get_column(attr_name)
+                        if column:
+                            prop_name = sanitize_property_name(attr_name)
+                            prop_type = self._get_property_type(column.data_type)
+                            
+                            prop = Property(
+                                name=prop_name,
+                                property_type=prop_type,
+                                is_required=not column.is_nullable,
+                                source_column=attr_name
+                            )
+                            rel_type.properties.append(prop)
+        
+        return rel_type
     
     def _table_to_node_label(self, table: Table) -> NodeLabel:
         """

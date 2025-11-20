@@ -2,6 +2,7 @@
 Command Line Interface
 
 CLI for the RDBMS to Graph migration system.
+Supports both S→C→T (with semantic enrichment) and direct S→T transformation.
 """
 
 import click
@@ -13,7 +14,7 @@ import logging
 from .utils.config import ConfigLoader
 from .utils.logger import setup_logger
 from .connectors import MySQLConnector, PostgreSQLConnector, SQLServerConnector
-from .analyzers import SchemaAnalyzer
+from .analyzers import SchemaAnalyzer, SemanticEnricher
 from .extractors import DataExtractor
 from .transformers import GraphTransformer
 from .loaders import Neo4jLoader
@@ -429,8 +430,98 @@ def _migrate_foreign_key_relationships(table, fk, source_connector, neo4j_loader
         click.echo(f"    ✓ Created {total_loaded:,} {rel_type} relationships")
 
 
-def _migrate_junction_relationships(table, source_connector, neo4j_loader, 
-                                   transformer, batch_size):
+def _get_node_label_for_table(table, graph_model):
+    """Get the node label for a given table"""
+    from .utils.helpers import sanitize_label
+    label = sanitize_label(table.name)
+    for node_label in graph_model.node_labels.values():
+        if node_label.label == label:
+            return node_label
+    return None
+
+
+def _migrate_table_to_nodes(table, source_connector, neo4j_loader, node_label, batch_size):
+    """Migrate a single table to nodes"""
+    if table.row_count == 0:
+        return
+    
+    click.echo(f"  • {table.name} → {node_label.label} ({table.row_count:,} rows)")
+    
+    extractor = DataExtractor(source_connector, batch_size)
+    total_loaded = 0
+    
+    for batch in extractor.extract_table_data(table, show_progress=False):
+        nodes = []
+        for row in batch:
+            # Convert row to properties
+            properties = {k: v for k, v in row.items() if v is not None}
+            nodes.append(properties)
+        
+        if nodes:
+            count = neo4j_loader.load_nodes_batch(node_label.label, nodes)
+            total_loaded += count
+    
+    click.echo(f"    ✓ Loaded {total_loaded:,} nodes")
+
+
+def _migrate_all_relationships(db_schema, source_connector, neo4j_loader, 
+                               transformer, batch_size):
+    """Migrate all relationships from foreign keys and junction tables"""
+    # Migrate FK relationships
+    for table in db_schema.tables.values():
+        for fk in table.foreign_keys:
+            _migrate_fk_relationships(
+                table, fk, source_connector, neo4j_loader, batch_size
+            )
+    
+    # Migrate junction table relationships
+    junction_tables = db_schema.get_junction_tables()
+    for table in junction_tables:
+        _migrate_junction_relationships(
+            table, source_connector, neo4j_loader, batch_size
+        )
+
+
+def _migrate_fk_relationships(table, fk, source_connector, neo4j_loader, batch_size):
+    """Migrate relationships from a foreign key"""
+    from .utils.helpers import sanitize_label
+    
+    # Use enriched relationship name if available
+    rel_type = fk.relationship_name if fk.relationship_name else f"FK_{table.name}_{fk.referenced_table}".upper()
+    from_label = sanitize_label(table.name)
+    to_label = sanitize_label(fk.referenced_table)
+    
+    extractor = DataExtractor(source_connector, batch_size)
+    total_loaded = 0
+    
+    for batch in extractor.extract_table_data(table, show_progress=False):
+        relationships = []
+        for row in batch:
+            if row.get(fk.column) is not None:
+                from_id = row.get(table.primary_key.columns[0] if table.primary_key else 'id')
+                to_id = row.get(fk.column)
+                if from_id is not None and to_id is not None:
+                    rel_props = {
+                        'from_id': from_id,
+                        'to_id': to_id,
+                        'properties': {}
+                    }
+                    # Add cardinality as property if available
+                    if fk.cardinality:
+                        rel_props['properties']['cardinality'] = fk.cardinality
+                    relationships.append(rel_props)
+        
+        if relationships:
+            count = neo4j_loader.load_relationships_batch(
+                rel_type, from_label, to_label, relationships
+            )
+            total_loaded += count
+    
+    if total_loaded > 0:
+        click.echo(f"    • {from_label} -{rel_type}-> {to_label}: {total_loaded:,} relationships")
+
+
+def _migrate_junction_relationships(table, source_connector, neo4j_loader, batch_size):
     """Migrate relationships from junction tables"""
     from .utils.helpers import sanitize_label
     
@@ -470,6 +561,212 @@ def _migrate_junction_relationships(table, source_connector, neo4j_loader,
     
     if total_loaded > 0:
         click.echo(f"    ✓ Created {total_loaded:,} {rel_type} relationships")
+
+
+@cli.command(name='enrich')
+@click.option('--config', '-c', required=True, type=click.Path(exists=True),
+              help='Path to configuration file')
+@click.option('--output', '-o', type=click.Path(), 
+              help='Output file for conceptual model (JSON)')
+def enrich_schema(config, output):
+    """
+    Perform semantic enrichment (S→C transformation).
+    Analyzes schema and infers semantic information using DBRE techniques.
+    """
+    click.echo("🧠 Performing semantic enrichment (S→C)...")
+    
+    config_loader = ConfigLoader(config)
+    cfg = config_loader.load()
+    
+    log_config = config_loader.get_logging_config()
+    logger = setup_logger(level=log_config['level'], log_file=log_config['file'])
+    
+    try:
+        source_config = config_loader.get_source_config()
+        
+        # Connect to source
+        click.echo("\n📡 Connecting to source database...")
+        source_connector = _create_connector(source_config)
+        source_connector.connect()
+        
+        # Phase 1: Extract schema (S)
+        click.echo("\n📊 Phase 1: Extracting relational schema...")
+        analyzer = SchemaAnalyzer(source_connector)
+        db_schema = analyzer.analyze()
+        click.echo(f"   ✓ Found {len(db_schema.tables)} tables")
+        
+        # Phase 2: Semantic enrichment (S→C)
+        click.echo("\n🔍 Phase 2: Semantic enrichment...")
+        enricher = SemanticEnricher(db_schema)
+        conceptual_model = enricher.enrich()
+        
+        # Display enrichment results
+        click.echo("\n📈 Semantic Enrichment Results:")
+        click.echo(f"   ✓ Entities: {len(conceptual_model.entities)}")
+        click.echo(f"   ✓ Strong Entities: {len(conceptual_model.get_strong_entities())}")
+        click.echo(f"   ✓ Weak Entities: {len(conceptual_model.get_weak_entities())}")
+        click.echo(f"   ✓ Relationships: {len(conceptual_model.relationships)}")
+        click.echo(f"   ✓ Inheritance Hierarchies: {len(conceptual_model.inheritance_hierarchies)}")
+        click.echo(f"   ✓ Inheritance Relationships: {len(conceptual_model.get_inheritance_relationships())}")
+        click.echo(f"   ✓ Aggregation Relationships: {len(conceptual_model.get_aggregation_relationships())}")
+        
+        # Show inheritance hierarchies
+        if conceptual_model.inheritance_hierarchies:
+            click.echo("\n🔗 Detected Inheritance Hierarchies:")
+            for idx, hierarchy in enumerate(conceptual_model.inheritance_hierarchies, 1):
+                click.echo(f"   {idx}. {' → '.join(hierarchy)}")
+        
+        # Show weak entity groups
+        if conceptual_model.weak_entity_groups:
+            click.echo("\n🔗 Detected Weak Entity Groups:")
+            for owner, weak_entities in conceptual_model.weak_entity_groups.items():
+                click.echo(f"   {owner} owns: {', '.join(weak_entities)}")
+        
+        # Show sample relationships with enriched names
+        click.echo("\n🏷️  Sample Enriched Relationships:")
+        for rel in list(conceptual_model.relationships)[:5]:
+            card_symbol = rel.cardinality.value
+            semantic_type = rel.semantics.value
+            click.echo(f"   • {rel.source_entity} -{rel.name}[{card_symbol}, {semantic_type}]-> {rel.target_entity}")
+        
+        # Save to file if requested
+        if output:
+            with open(output, 'w') as f:
+                json.dump(conceptual_model.to_dict(), f, indent=2)
+            click.echo(f"\n💾 Conceptual model saved to: {output}")
+        
+        source_connector.disconnect()
+        click.echo("\n✅ Semantic enrichment complete!")
+        
+    except Exception as e:
+        click.echo(f"\n❌ Error: {e}", err=True)
+        logger.error(f"Enrichment failed: {e}", exc_info=True)
+        sys.exit(1)
+
+
+@cli.command(name='migrate-sct')
+@click.option('--config', '-c', required=True, type=click.Path(exists=True),
+              help='Path to configuration file')
+@click.option('--dry-run', is_flag=True, help='Analyze only, do not migrate data')
+@click.option('--tables', '-t', help='Comma-separated list of tables to migrate')
+@click.option('--clear-target', is_flag=True, help='Clear target database before migration')
+def migrate_sct(config, dry_run, tables, clear_target):
+    """
+    Execute migration using S→C→T architecture with semantic enrichment.
+    This is the preferred method that preserves semantic information.
+    """
+    click.echo("🚀 Starting S→C→T migration with semantic enrichment...")
+    
+    config_loader = ConfigLoader(config)
+    cfg = config_loader.load()
+    
+    log_config = config_loader.get_logging_config()
+    logger = setup_logger(level=log_config['level'], log_file=log_config['file'])
+    
+    start_time = time.time()
+    
+    try:
+        source_config = config_loader.get_source_config()
+        target_config = config_loader.get_target_config()
+        migration_config = config_loader.get_migration_config()
+        
+        # Connect to source
+        click.echo("\n📡 Connecting to source database...")
+        source_connector = _create_connector(source_config)
+        source_connector.connect()
+        
+        # Phase 1: Extract schema (S)
+        click.echo("\n📊 Phase 1: Extracting relational schema (S)...")
+        analyzer = SchemaAnalyzer(source_connector)
+        db_schema = analyzer.analyze()
+        click.echo(f"   ✓ Extracted {len(db_schema.tables)} tables")
+        
+        # Phase 2: Semantic enrichment (S→C)
+        click.echo("\n🧠 Phase 2: Semantic enrichment (S→C)...")
+        enricher = SemanticEnricher(db_schema)
+        conceptual_model = enricher.enrich()
+        click.echo(f"   ✓ Created {len(conceptual_model.entities)} enriched entities")
+        click.echo(f"   ✓ Created {len(conceptual_model.relationships)} semantic relationships")
+        click.echo(f"   ✓ Detected {len(conceptual_model.inheritance_hierarchies)} inheritance hierarchies")
+        
+        # Phase 3: Transform to graph (C→T)
+        click.echo("\n🔄 Phase 3: Transforming to graph model (C→T)...")
+        transformer = GraphTransformer(db_schema=db_schema, conceptual_model=conceptual_model)
+        graph_model = transformer.transform()
+        click.echo(f"   ✓ Created {len(graph_model.node_labels)} node labels")
+        click.echo(f"   ✓ Created {len(graph_model.relationship_types)} relationship types")
+        
+        if dry_run:
+            click.echo("\n🔍 Dry run complete - no data migrated")
+            source_connector.disconnect()
+            return
+        
+        # Connect to Neo4j
+        click.echo("\n📡 Connecting to Neo4j...")
+        neo4j_loader = Neo4jLoader(
+            uri=target_config['uri'],
+            username=target_config['username'],
+            password=target_config['password'],
+            database=target_config.get('database', 'neo4j')
+        )
+        neo4j_loader.connect()
+        
+        if clear_target:
+            click.echo("\n🗑️  Clearing target database...")
+            neo4j_loader.clear_database()
+        
+        # Create constraints and indexes
+        click.echo("\n🔧 Creating constraints and indexes...")
+        neo4j_loader.create_constraints_and_indexes(graph_model)
+        
+        # Migrate data (using existing logic)
+        click.echo("\n📤 Phase 4: Migrating data...")
+        batch_size = migration_config.get('batch_size', 1000)
+        
+        # Filter tables if specified
+        tables_to_migrate = None
+        if tables:
+            tables_to_migrate = [t.strip() for t in tables.split(',')]
+        
+        # Migrate entity tables
+        entity_tables = db_schema.get_entity_tables()
+        for table in entity_tables:
+            if tables_to_migrate and table.name not in tables_to_migrate:
+                continue
+            
+            node_label = _get_node_label_for_table(table, graph_model)
+            if node_label:
+                _migrate_table_to_nodes(table, source_connector, neo4j_loader, 
+                                       node_label, batch_size)
+        
+        # Migrate relationships
+        click.echo("\n🔗 Migrating relationships...")
+        _migrate_all_relationships(db_schema, source_connector, neo4j_loader, 
+                                  transformer, batch_size)
+        
+        # Validation
+        click.echo("\n✓ Validating migration...")
+        validator = DataValidator(source_connector, neo4j_loader, db_schema, graph_model)
+        post_results = validator.validate_post_migration()
+        
+        total_mismatches = len([c for c in post_results.get('row_counts', {}).values() 
+                               if not c['match']])
+        if total_mismatches == 0:
+            click.echo("   ✅ All row counts match!")
+        else:
+            click.echo(f"   ⚠️  {total_mismatches} table(s) with count mismatches")
+        
+        # Cleanup
+        source_connector.disconnect()
+        neo4j_loader.close()
+        
+        elapsed = time.time() - start_time
+        click.echo(f"\n✅ S→C→T migration complete in {format_duration(elapsed)}!")
+        
+    except Exception as e:
+        click.echo(f"\n❌ Error: {e}", err=True)
+        logger.error(f"S→C→T migration failed: {e}", exc_info=True)
+        sys.exit(1)
 
 
 if __name__ == '__main__':
