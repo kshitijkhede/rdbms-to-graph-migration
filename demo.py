@@ -170,7 +170,7 @@ def demonstrate_graph_transformation(conceptual_model):
         props_preview = ', '.join([p.name for p in node_type.properties[:4]])
         if len(node_type.properties) > 4:
             props_preview += ", ..."
-        print(f"  • {node_type.label}")
+        print(f"  • {node_type.name}")
         print(f"    Properties: {props_preview}")
     
     print(f"\n➡️  Edge Types:")
@@ -190,7 +190,7 @@ def display_cypher_queries(graph_model):
     if graph_model.node_labels:
         node_type = list(graph_model.node_labels.values())[0]
         props = ', '.join([f"{p.name}: ${p.name}" for p in node_type.properties[:3]])
-        print(f"  CREATE (n:{node_type.label} {{{props}}})")
+        print(f"  CREATE (n:{node_type.name} {{{props}}})")
     
     print("\n📝 Relationship creation query:")
     if graph_model.relationship_types:
