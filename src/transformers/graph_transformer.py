@@ -151,9 +151,9 @@ class GraphTransformer:
                         
                         prop = Property(
                             name=prop_name,
-                            property_type=prop_type,
+                            type=prop_type,
                             is_required=not column.is_nullable,
-                            source_column=attr_name
+                            original_column=attr_name
                         )
                         node_label.properties.append(prop)
                 
