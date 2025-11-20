@@ -1,0 +1,49 @@
+# Real Database Migration Configuration
+# Configure your actual database credentials here
+
+# Source Database Configuration
+source:
+  type: mysql  # Options: mysql, postgresql, sqlserver
+  host: localhost
+  port: 3306
+  database: university_db  # Your source database name
+  username: root
+  password: your_password  # Change this!
+  # schema: public  # Optional, for PostgreSQL only
+
+# Target Neo4j Configuration
+target:
+  neo4j:
+    uri: bolt://localhost:7687
+    username: neo4j
+    password: neo4j_password  # Change this!
+    database: neo4j
+
+# Migration Settings
+migration:
+  batch_size: 1000  # Rows per batch
+  max_workers: 4  # Parallel workers
+  validate_before: true
+  validate_after: true
+  create_indexes: true
+  streaming: false  # Set true for very large datasets
+
+# Schema Mapping Configuration
+mapping:
+  # Tables to treat as nodes (leave empty to auto-detect)
+  tables_as_nodes: []
+  
+  # Convert foreign keys to relationships
+  foreign_keys_as_relationships: true
+  
+  # Convert junction tables to relationships
+  junction_tables_as_relationships: true
+  
+  # Custom relationship names (optional)
+  custom_relationships: {}
+
+# Logging Configuration
+logging:
+  level: INFO
+  file: logs/migration.log
+  console: true
