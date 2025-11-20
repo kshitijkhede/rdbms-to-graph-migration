@@ -144,7 +144,7 @@ def demonstrate_semantic_enrichment(db_schema):
     for rel in conceptual_model.relationships:
         card_str = rel.cardinality.value if rel.cardinality else "unknown"
         sem_str = f" ({rel.semantics.value})" if rel.semantics != RelationshipSemantics.ASSOCIATION else ""
-        print(f"  • {rel.from_entity} → {rel.to_entity}")
+        print(f"  • {rel.source_entity} → {rel.target_entity}")
         print(f"    Name: {rel.name}, Cardinality: {card_str}{sem_str}")
     
     return conceptual_model
